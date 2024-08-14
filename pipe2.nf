@@ -1,7 +1,4 @@
-hlascan_bin="/juno/work/ccs/noronhaa/tools/hla_scan_r_v2.1.4"
-db="/juno/work/ccs/noronhaa/hlascan/db/HLA-ALL.IMGT"
-samtools_="/opt/common/CentOS_7/samtools/samtools-1.9/bin/samtools"
-bed_folder="/juno/work/ccs/noronhaa/hlascan/gen_hlascan_WES25TN/filtered_bed"
+bed_folder="${workflow.projectDir}/assets/filtered_bed"
 
 outDir = params.outDir
 bamMapping = Channel.fromPath(params.bamMapping)
@@ -13,6 +10,8 @@ bamMapping = Channel.fromPath(params.bamMapping)
 
 process filterBam {
 tag {sampleid}
+//container = "biocontainers/samtools:v1.9-4-deb_cv1"
+container = "quay.io/biocontainers/samtools:1.20--h50ea8bc_0"
 
 input:
 set sampleid, file(bam), file(bai) from inBam_Ch
@@ -26,8 +25,8 @@ set sampleid, file("*filtered.bam"),file("*filtered.bam.bai") into filteredBam_C
 script:
 bed=bed_folder + "/filtered.bed"
 """
-$samtools_ view -b -hL $bed $bam > ${sampleid}.filtered.bam
-$samtools_ index ${sampleid}.filtered.bam
+samtools view -b -hL $bed $bam > ${sampleid}.filtered.bam
+samtools index ${sampleid}.filtered.bam
 """
 }
 
@@ -36,6 +35,7 @@ Channel.from("HLA-A","HLA-B","HLA-C","HLA-DMA","HLA-DMB","HLA-DOA","HLA-DOB","HL
 process filterGene_and_hlascan {
 tag { sampleid + "@" + gene }
 publishDir "${outDir}/filter1/${sampleid}/", mode: params.publishDirMode
+container = "cmopipeline/hlascan:0.1.0"
 
 input:
 each gene from GOI_Ch
@@ -48,12 +48,12 @@ file("${sampleid}.${gene}.results.txt") into hlascan_output
 script:
 bed=bed_folder + "/filtered.${gene}.bed"
 """
-$samtools_ view -b -hL $bed $bam > ${sampleid}.filtered.${gene}.bam
-$samtools_ index ${sampleid}.filtered.${gene}.bam
+samtools view -b -hL $bed $bam > ${sampleid}.filtered.${gene}.bam
+samtools index ${sampleid}.filtered.${gene}.bam
 
-${hlascan_bin} \\
+hla_scan_r_v2.1.4 \\
 	-b ${sampleid}.filtered.${gene}.bam \\
-	-d ${db} \\
+	-d /db/HLA-ALL.IMGT \\
 	-v 37 -t 2 \\
 	-g $gene \\
 	> ${sampleid}.${gene}.results.txt | true
@@ -64,6 +64,7 @@ ${hlascan_bin} \\
 process filterGene_and_hlascan2 {
 tag { sampleid + "@" + gene }
 publishDir "${outDir}/filter2/${sampleid}/", mode: params.publishDirMode
+container = "cmopipeline/hlascan:0.1.0"
 
 input:
 each gene from GOI_Ch2
@@ -76,9 +77,9 @@ file("${sampleid}.${gene}.results.txt") into hlascan_output2
 script:
 bed=bed_folder + "/filtered.${gene}.bed"
 """
-${hlascan_bin} \\
+hla_scan_r_v2.1.4 \\
 	-b $bam \\
-	-d ${db} \\
+	-d /db/HLA-ALL.IMGT \\
 	-v 37 -t 2 \\
 	-g $gene \\
 	> ${sampleid}.${gene}.results.txt | true
@@ -89,15 +90,19 @@ ${hlascan_bin} \\
 process calculate_coverage {
 tag {sampleid}
 publishDir "${outDir}/coverage/", mode: params.publishDirMode
+//container = "biocontainers/samtools:v1.9-4-deb_cv1"
+container = "quay.io/biocontainers/samtools:1.20--h50ea8bc_0"
 
 input:
 set sampleid, file(bam), file(bai) from filteredBam_Ch3
-file(bed) from Channel.value([file("/juno/work/ccs/noronhaa/hlascan/filtered_regions/annot/filtered.bed")])
+file(bed_folder) from Channel.value([file(bed_folder)])
+//file(bed) from Channel.value([file("/juno/work/ccs/noronhaa/hlascan/filtered_regions/annot/filtered.bed")])
 
 output: 
 file("${sampleid}.coverage")
 
 script:
+bed=bed_folder + "/filtered.bed"
 """
 samtools bedcov ${bed} ${bam} > ${sampleid}.coverage 
 """
@@ -137,6 +142,7 @@ bash shell_call_hla_type \\
 	${outputDir}
 
 mv winners.hla.txt ${outputPrefix}.hla.txt
+ls -la .
 """
 }
 
@@ -172,6 +178,7 @@ export NUM_THREADS=4
 
 bash ${bin_path} ${bam} Unknown 1 ${genome_} STDFQ 0 ${outputDir}
 mv winners.hla.txt ${outputPrefix}.hla.txt
+ls -la .
 """
 }
 
@@ -281,6 +288,23 @@ OptiTypePipeline.py -i ${fq1} ${fq2} -c config.ini --dna --prefix $sampleid --ou
 """
 }
 
+process HLALA_downloadgraph {
+container = "cmopipeline/hlala:0.0.1-test"
+input:
+val(url) from Channel.value("http://www.well.ox.ac.uk/downloads/PRG_MHC_GRCh38_withIMGT.tar.gz")
+
+output:
+file("PRG_MHC_GRCh38_withIMGT/") into hlala_graph
+
+script:
+"""
+wget $url
+tar -xzvf PRG_MHC_GRCh38_withIMGT.tar.gz
+/opt/conda/envs/hlala/opt/hla-la/bin/HLA-LA --action prepareGraph --PRG_graph_dir PRG_MHC_GRCh38_withIMGT
+"""
+
+}
+
 process HLALA {
 
 tag { "${sampleid}" }
@@ -293,7 +317,9 @@ memory = 8.GB
 
 input:
   set sampleid, file(bam), file(bai) from inBam4HLALA 
-  file(graphdir) from Channel.value([file("/juno/work/ccs/noronhaa/hlascan/gen_hlascan_repo/hlascan_nextflow/small_test/HLA-LA/graphs/")])
+  //file(graphdir) from Channel.value([file("/juno/work/ccs/noronhaa/hlascan/gen_hlascan_repo/hlascan_nextflow/small_test/HLA-LA/graphs/")])
+  //file(graphdir) from Channel.value([file("http://www.well.ox.ac.uk/downloads/PRG_MHC_GRCh38_withIMGT.tar.gz")])
+  file(graphdir) from hlala_graph
 
 output:
   file("${sampleid}.hlala.tsv")
@@ -332,6 +358,7 @@ MHC_autopipeline -i $bam -od output/ -v hg19
 """
 }
 
+
 process Kourami {
 
 tag { "${sampleid}" }
@@ -348,7 +375,7 @@ file("${sampleid}.result")
 
 script:
 """
-bwa mem -t ${task.cpus *2 } ${resourcedir}/db/All_FINAL_with_Decoy.fa.gz ${fq1} ${fq2} | samtools view -Sb - > ${sampleid}.kourami.bam
-java -jar /opt/kourami-0.9.6/target/Kourami.jar -d ${resourcedir}/db/ -o ${sampleid} ${sampleid}.kourami.bam
+bwa mem -t ${task.cpus *2 } /opt/kourami-0.9.6/db/All_FINAL_with_Decoy.fa.gz ${fq1} ${fq2} | samtools view -Sb - > ${sampleid}.kourami.bam
+java -jar /opt/kourami-0.9.6/target/Kourami.jar -d /opt/kourami-0.9.6/db/ -o ${sampleid} ${sampleid}.kourami.bam
 """
 }
