@@ -33,7 +33,7 @@ samtools index ${sampleid}.filtered.bam
 Channel.from("HLA-A","HLA-B","HLA-C","HLA-DMA","HLA-DMB","HLA-DOA","HLA-DOB","HLA-DPA1","HLA-DPB1","HLA-DQA1","HLA-DQB1","HLA-DRA","HLA-DRB1","HLA-DRB5").into{ GOI_Ch ; GOI_Ch2 }
 
 process filterGene_and_hlascan {
-tag { sampleid + "@" + gene }
+tag { "${sampleid}@${gene}" }
 publishDir "${outDir}/filter1/${sampleid}/", mode: params.publishDirMode
 container = "cmopipeline/hlascan:0.1.0"
 
@@ -114,6 +114,7 @@ container = "sachet/polysolver:v4"
 
 cpus = { 1 + (1 * task.attempt) } 
 memory = 8.GB 
+time = { task.attempt < 3 ? 6.h * task.attempt  : 500.h }
 
 publishDir "${outDir}/polysolver_v4/", mode: params.publishDirMode
 
@@ -153,6 +154,7 @@ scratch = true
 
 cpus = { 1 + (1 * task.attempt) }
 memory = 8.GB 
+time = { task.attempt < 3 ? 6.h * task.attempt  : 500.h }
 
 publishDir "${outDir}/polysolver_v3/", mode: params.publishDirMode
 
@@ -225,8 +227,9 @@ tag {sampleid}
 container = "cmopipeline/hlahd:1.4"
 scratch = true
 
-cpus = { 3 * task.attempt }
+cpus = { 5 * task.attempt }
 memory = 10.GB
+time = { task.attempt < 3 ? 6.h * task.attempt  : 500.h }
 
 publishDir "${outDir}/hla-hd/", mode: params.publishDirMode
 
@@ -257,8 +260,9 @@ tag {sampleid}
 container = "quay.io/biocontainers/optitype:1.3.5--0"
 scratch = true
 
-cpus = { 2 * task.attempt }
+cpus = { 4 * task.attempt }
 memory = 8.GB
+time = { task.attempt < 3 ? 6.h * task.attempt  : 500.h }
 
 publishDir "${outDir}/optitype/", mode: params.publishDirMode
 
@@ -290,6 +294,9 @@ OptiTypePipeline.py -i ${fq1} ${fq2} -c config.ini --dna --prefix $sampleid --ou
 
 process HLALA_downloadgraph {
 container = "cmopipeline/hlala:0.0.1-test"
+cpus = 5
+time = { task.attempt < 3 ? 6.h * task.attempt  : 500.h }
+
 input:
 val(url) from Channel.value("http://www.well.ox.ac.uk/downloads/PRG_MHC_GRCh38_withIMGT.tar.gz")
 
@@ -301,6 +308,8 @@ script:
 wget $url
 tar -xzvf PRG_MHC_GRCh38_withIMGT.tar.gz
 /opt/conda/envs/hlala/opt/hla-la/bin/HLA-LA --action prepareGraph --PRG_graph_dir PRG_MHC_GRCh38_withIMGT
+echo \$PWD
+bwa index PRG_MHC_GRCh38_withIMGT/extendedReferenceGenome/extendedReferenceGenome.fa
 """
 
 }
@@ -311,8 +320,9 @@ tag { "${sampleid}" }
 publishDir "${outDir}/hlala/", mode: params.publishDirMode
 
 container = "cmopipeline/hlala:0.0.1-test"
-cpus = { 4 * task.attempt }
-memory = 8.GB
+cpus = { 6 * task.attempt }
+memory = 10.GB
+time = { task.attempt < 3 ? 6.h * task.attempt  : 500.h }
 
 
 input:
@@ -329,10 +339,10 @@ script:
   export LC_ALL=C
   HLA-LA.pl \\
     --BAM ${bam} \\
-    --graph PRG_MHC_GRCh38_withIMGT \\
+    --graph ${graphdir} \\
     --sampleID sample \\
-    --maxThreads ${task.cpus * 2} \\
-    --customGraphDir ${graphdir} \\
+    --maxThreads ${task.cpus } \\
+    --customGraphDir . \\
     --workingDir ./
 
   cp sample/hla/R1_bestguess_G.txt ${sampleid}.hlala.tsv 
